@@ -1,0 +1,181 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "yomail - deployment to cPanel",
+    "output": "docs/diagrams/out/yomail-deploy.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "backend": { "label": "Build / install step" },
+        "security": { "label": "Config merge" },
+        "database": { "label": "Database" },
+        "cloud": { "label": "Server / Passenger" }
+      }
+    },
+    "repository": {
+      "url": "https://github.com/rmhambatofi/yomail.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "e665933f0cf947415454793fa113270a84dc990a"
+    }
+  },
+  "lanes": [
+    { "id": "dev", "label": "Developer machine (scripts/deploy.sh)" },
+    { "id": "server", "label": "cPanel account over SSH" },
+    { "id": "web", "label": "Apache / Passenger" }
+  ],
+  "phases": [
+    { "id": "build", "label": "Build", "fromCol": 0, "toCol": 1 },
+    {
+      "id": "upload",
+      "label": "Upload + configure",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "activate",
+      "label": "Install + activate",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": ["build", "tarball", "extract", "htaccess", "npmci", "migrate", "restart"],
+  "nodes": [
+    {
+      "id": "build",
+      "lane": "dev",
+      "col": 0,
+      "type": "backend",
+      "label": "npm run build",
+      "sublabel": "shared, api, web",
+      "width": 140,
+      "sources": [{ "path": "scripts/deploy.sh", "line": 48, "end_line": 55 }]
+    },
+    {
+      "id": "tarball",
+      "lane": "dev",
+      "col": 1,
+      "type": "backend",
+      "label": "Runtime tarball",
+      "sublabel": "dist + manifests, no src/.env",
+      "width": 140,
+      "sources": [{ "path": "scripts/deploy.sh", "line": 57, "end_line": 66 }]
+    },
+    {
+      "id": "extract",
+      "lane": "server",
+      "col": 2,
+      "type": "cloud",
+      "label": "Extract to ~/yomail",
+      "sublabel": "tar over ssh",
+      "width": 140,
+      "sources": [{ "path": "scripts/deploy.sh", "line": 75, "end_line": 76 }]
+    },
+    {
+      "id": "htaccess",
+      "lane": "server",
+      "col": 3,
+      "type": "security",
+      "label": "Merge .htaccess",
+      "sublabel": "keep cPanel Passenger block",
+      "tag": "sticky sessions",
+      "width": 140,
+      "sources": [
+        { "path": "scripts/deploy.sh", "line": 78, "end_line": 98 },
+        { "path": "deploy/htaccess", "line": 13, "end_line": 18 }
+      ]
+    },
+    {
+      "id": "docroot",
+      "lane": "web",
+      "col": 3,
+      "type": "cloud",
+      "label": "Clean docroot",
+      "sublabel": "remove v1 index.html, assets/",
+      "width": 140,
+      "sources": [{ "path": "scripts/deploy.sh", "line": 101, "end_line": 101 }]
+    },
+    {
+      "id": "npmci",
+      "lane": "server",
+      "col": 4,
+      "type": "backend",
+      "label": "npm ci --omit=dev",
+      "sublabel": "monorepo root",
+      "width": 140,
+      "sources": [{ "path": "scripts/deploy.sh", "line": 106, "end_line": 122 }]
+    },
+    {
+      "id": "migrate",
+      "lane": "server",
+      "col": 5,
+      "type": "database",
+      "label": "Run migrations",
+      "sublabel": "migration:run:prod",
+      "width": 140,
+      "sources": [{ "path": "scripts/deploy.sh", "line": 123, "end_line": 123 }]
+    },
+    {
+      "id": "restart",
+      "lane": "web",
+      "col": 5,
+      "type": "cloud",
+      "label": "Passenger restart",
+      "sublabel": "touch tmp/restart.txt",
+      "width": 140,
+      "sources": [{ "path": "scripts/deploy.sh", "line": 125, "end_line": 126 }]
+    }
+  ],
+  "edges": [
+    { "id": "build-tarball", "from": "build", "to": "tarball" },
+    {
+      "id": "tarball-extract",
+      "from": "tarball",
+      "to": "extract",
+      "label": "ssh | tar -xzf",
+      "variant": "emphasis"
+    },
+    { "id": "extract-htaccess", "from": "extract", "to": "htaccess" },
+    {
+      "id": "htaccess-docroot",
+      "from": "htaccess",
+      "to": "docroot",
+      "label": "Apache serves files before Passenger",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    { "id": "htaccess-npmci", "from": "htaccess", "to": "npmci" },
+    { "id": "npmci-migrate", "from": "npmci", "to": "migrate" },
+    { "id": "migrate-restart", "from": "migrate", "to": "restart", "variant": "emphasis" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "What is uploaded",
+      "items": [
+        "package.json, package-lock.json, .nvmrc, packages/shared/dist, apps/api/dist, apps/web/dist, deploy files",
+        "Never src, node_modules or .env: server config lives only in ~/yomail/apps/api/.env"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Why the merge is careful",
+      "items": [
+        "cPanel owns a fenced Passenger block in .htaccess; only the last block is kept",
+        "The fence markers are matched at the start of a line and never quoted in full in deploy/htaccess"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Flags",
+      "items": [
+        "--dry-run, --skip-build, --no-migrate; SSH_BATCH=0 allows password prompts",
+        "Hourly cron runs npm run purge outside Passenger"
+      ]
+    }
+  ]
+}

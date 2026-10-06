@@ -1,0 +1,365 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "yomail - system overview",
+    "output": "docs/diagrams/out/yomail-system.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/rmhambatofi/yomail.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "e665933f0cf947415454793fa113270a84dc990a"
+    }
+  },
+  "components": [
+    {
+      "id": "sender",
+      "type": "external",
+      "label": "Webhook sender",
+      "sublabel": "any HTTP client",
+      "pos": [40, 200],
+      "size": [150, 64]
+    },
+    {
+      "id": "spa",
+      "type": "frontend",
+      "label": "React SPA",
+      "sublabel": "apps/web in the browser",
+      "pos": [40, 440],
+      "size": [150, 64],
+      "tag": "live | polling | offline",
+      "sources": [
+        {
+          "path": "apps/web/src/App.tsx",
+          "line": 7,
+          "end_line": 15,
+          "label": "routes / and /inbox/:uuid"
+        },
+        {
+          "path": "apps/web/src/lib/useLiveRequests.ts",
+          "line": 131,
+          "end_line": 144,
+          "label": "Socket.IO subscribe"
+        },
+        {
+          "path": "apps/web/src/lib/useLiveRequests.ts",
+          "line": 169,
+          "end_line": 176,
+          "label": "REST polling fallback"
+        }
+      ]
+    },
+    {
+      "id": "apache",
+      "type": "cloud",
+      "label": "Apache + Passenger",
+      "sublabel": "cPanel, app mounted at /",
+      "pos": [300, 172],
+      "size": [150, 100],
+      "tag": "sticky sessions",
+      "sources": [
+        {
+          "path": "deploy/htaccess",
+          "line": 13,
+          "end_line": 18,
+          "label": "PassengerStickySessions"
+        },
+        { "path": "scripts/deploy.sh", "line": 78, "end_line": 98, "label": ".htaccess merge" }
+      ]
+    },
+    {
+      "id": "rest",
+      "type": "backend",
+      "label": "REST API",
+      "sublabel": "/api/endpoints, /health",
+      "pos": [570, 60],
+      "size": [150, 64],
+      "sources": [
+        {
+          "path": "apps/api/src/endpoints/endpoints.controller.ts",
+          "line": 7,
+          "end_line": 23,
+          "label": "EndpointsController"
+        },
+        {
+          "path": "apps/api/src/requests/requests.controller.ts",
+          "line": 20,
+          "end_line": 53,
+          "label": "RequestsController"
+        }
+      ]
+    },
+    {
+      "id": "capture",
+      "type": "backend",
+      "label": "CaptureController",
+      "sublabel": "@All /:uuid and /:uuid/*",
+      "pos": [570, 190],
+      "size": [150, 64],
+      "tag": "404 before body, 413 cap",
+      "sources": [
+        {
+          "path": "apps/api/src/capture/capture.controller.ts",
+          "line": 34,
+          "end_line": 39,
+          "label": "capture routes"
+        },
+        {
+          "path": "apps/api/src/capture/capture.controller.ts",
+          "line": 52,
+          "end_line": 62,
+          "label": "404 / 413 handling"
+        },
+        {
+          "path": "apps/api/src/capture/capture.service.ts",
+          "line": 43,
+          "end_line": 64,
+          "label": "store + emit"
+        }
+      ]
+    },
+    {
+      "id": "gateway",
+      "type": "messagebus",
+      "label": "LiveGateway",
+      "sublabel": "Socket.IO /api/socket.io",
+      "pos": [570, 320],
+      "size": [150, 64],
+      "tag": "rooms ep:<id>",
+      "sources": [
+        {
+          "path": "apps/api/src/live/live.gateway.ts",
+          "line": 28,
+          "end_line": 59,
+          "label": "gateway + event bus"
+        },
+        {
+          "path": "apps/api/src/live/live.gateway.ts",
+          "line": 68,
+          "end_line": 85,
+          "label": "subscribe handler"
+        },
+        {
+          "path": "apps/api/src/live/socket-io.adapter.ts",
+          "line": 25,
+          "end_line": 29,
+          "label": "socket path"
+        }
+      ]
+    },
+    {
+      "id": "detector",
+      "type": "backend",
+      "label": "ChangeDetector",
+      "sublabel": "polls DB every 2 s",
+      "pos": [570, 450],
+      "size": [150, 64],
+      "tag": "dedupe ids 15 s",
+      "sources": [
+        {
+          "path": "apps/api/src/live/change-detector.service.ts",
+          "line": 10,
+          "end_line": 13,
+          "label": "poll constants"
+        },
+        {
+          "path": "apps/api/src/live/change-detector.service.ts",
+          "line": 76,
+          "end_line": 91,
+          "label": "poll + dedupe"
+        }
+      ]
+    },
+    {
+      "id": "static",
+      "type": "backend",
+      "label": "ServeStaticModule",
+      "sublabel": "serves apps/web/dist",
+      "pos": [570, 580],
+      "size": [150, 64],
+      "tag": "GET * fallback, last module",
+      "sources": [
+        {
+          "path": "apps/api/src/static/static.module.ts",
+          "line": 23,
+          "end_line": 40,
+          "label": "serve-static config"
+        },
+        {
+          "path": "apps/api/src/app.module.ts",
+          "line": 32,
+          "end_line": 33,
+          "label": "registered last"
+        }
+      ]
+    },
+    {
+      "id": "purge",
+      "type": "backend",
+      "label": "PurgeService",
+      "sublabel": "retention cleanup",
+      "pos": [570, 710],
+      "size": [150, 64],
+      "tag": "retention computed on read",
+      "sources": [
+        {
+          "path": "apps/api/src/purge/purge.service.ts",
+          "line": 39,
+          "end_line": 83,
+          "label": "run()"
+        },
+        {
+          "path": "apps/api/src/purge/purge.scheduler.ts",
+          "line": 15,
+          "end_line": 18,
+          "label": "hourly backup job"
+        }
+      ]
+    },
+    {
+      "id": "cron",
+      "type": "external",
+      "label": "cPanel cron",
+      "sublabel": "hourly npm run purge",
+      "pos": [300, 710],
+      "size": [150, 64],
+      "sources": [
+        {
+          "path": "apps/api/src/cli/purge.ts",
+          "line": 27,
+          "end_line": 38,
+          "label": "PurgeCliModule entry"
+        }
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "MySQL",
+      "sublabel": "endpoints / requests",
+      "pos": [900, 330],
+      "size": [150, 110],
+      "tag": "settings + migrations",
+      "sources": [
+        {
+          "path": "apps/api/src/database/data-source.ts",
+          "line": 18,
+          "end_line": 30,
+          "label": "datasource"
+        },
+        {
+          "path": "apps/api/src/requests/request.entity.ts",
+          "line": 1,
+          "label": "requests entity"
+        },
+        {
+          "path": "apps/api/src/endpoints/endpoint.entity.ts",
+          "line": 1,
+          "label": "endpoints entity"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "cPanel shared host - yo.manitra.fr",
+      "wraps": ["apache", "rest", "capture", "gateway", "detector", "static", "purge", "cron", "db"]
+    },
+    {
+      "kind": "region",
+      "label": "NestJS API - apps/api (Passenger processes)",
+      "wraps": ["rest", "capture", "gateway", "detector", "static", "purge"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "sender-apache",
+      "from": "sender",
+      "to": "apache",
+      "label": "HTTPS /<uuid>",
+      "variant": "emphasis"
+    },
+    { "id": "spa-apache", "from": "spa", "to": "apache", "label": "HTTPS /, /api" },
+    { "id": "apache-rest", "from": "apache", "to": "rest", "label": "REST /api" },
+    {
+      "id": "apache-capture",
+      "from": "apache",
+      "to": "capture",
+      "label": "capture",
+      "variant": "emphasis"
+    },
+    { "id": "apache-gateway", "from": "apache", "to": "gateway", "label": "Socket.IO poll" },
+    {
+      "id": "apache-static",
+      "from": "apache",
+      "to": "static",
+      "label": "SPA + assets",
+      "variant": "dashed"
+    },
+    {
+      "id": "capture-gateway",
+      "from": "capture",
+      "to": "gateway",
+      "label": "request:new (in-process bus)",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "detector-gateway",
+      "from": "detector",
+      "to": "gateway",
+      "label": "unseen rows",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    { "id": "rest-db", "from": "rest", "to": "db", "label": "SELECT / DELETE" },
+    {
+      "id": "capture-db",
+      "from": "capture",
+      "to": "db",
+      "label": "INSERT requests",
+      "variant": "emphasis"
+    },
+    {
+      "id": "detector-db",
+      "from": "detector",
+      "to": "db",
+      "label": "poll new rows",
+      "variant": "dashed"
+    },
+    { "id": "purge-db", "from": "purge", "to": "db", "label": "DELETE expired" },
+    { "id": "cron-purge", "from": "cron", "to": "purge", "label": "CLI, no HTTP" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Capture path",
+      "items": [
+        "Validate UUID, check the endpoint exists, then stream the body (413 above MAX_BODY_BYTES)",
+        "Classify json / form / multipart / html / xml / text / binary; files are never stored",
+        "Always answer 200 {ok, id} with CORS *; at most 500 rows per endpoint"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Real time without WebSocket",
+      "items": [
+        "Passenger on Apache has no WebSocket upgrade: Socket.IO runs on HTTP long-polling",
+        "Several app processes: the capturing process emits in memory, ChangeDetector polls the DB for the others",
+        "Clients dedupe by id and fall back to REST polling every 5 s when the socket is down"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Shared code",
+      "items": [
+        "packages/shared: DTOs, Socket.IO event maps and the endpoint id rule used by API and web",
+        "Retention is computed, never stored: expires_at = received_at + settings.retention_days"
+      ]
+    }
+  ]
+}

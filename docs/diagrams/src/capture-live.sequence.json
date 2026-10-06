@@ -1,0 +1,212 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "yomail - webhook capture and live delivery",
+    "output": "docs/diagrams/out/yomail-capture-live.html",
+    "quality_profile": "showcase",
+    "viewBox": [1040, 660],
+    "column_fit": "spread",
+    "repository": {
+      "url": "https://github.com/rmhambatofi/yomail.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "e665933f0cf947415454793fa113270a84dc990a"
+    }
+  },
+  "participants": [
+    { "id": "sender", "type": "external", "label": "Sender", "sublabel": "HTTP client" },
+    {
+      "id": "apache",
+      "type": "cloud",
+      "label": "Apache",
+      "sublabel": "Passenger",
+      "sources": [{ "path": "deploy/htaccess", "line": 13, "end_line": 18 }]
+    },
+    {
+      "id": "capture",
+      "type": "backend",
+      "label": "Capture",
+      "sublabel": "process A",
+      "sources": [
+        { "path": "apps/api/src/capture/capture.controller.ts", "line": 44, "end_line": 85 }
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "MySQL",
+      "sublabel": "requests",
+      "sources": [{ "path": "apps/api/src/capture/capture.service.ts", "line": 43, "end_line": 64 }]
+    },
+    {
+      "id": "detector",
+      "type": "backend",
+      "label": "ChangeDetector",
+      "sublabel": "process B",
+      "sources": [
+        { "path": "apps/api/src/live/change-detector.service.ts", "line": 76, "end_line": 91 }
+      ]
+    },
+    {
+      "id": "gateway",
+      "type": "messagebus",
+      "label": "LiveGateway",
+      "sublabel": "room ep:<id>",
+      "sources": [{ "path": "apps/api/src/live/live.gateway.ts", "line": 42, "end_line": 59 }]
+    },
+    {
+      "id": "inbox",
+      "type": "frontend",
+      "label": "Inbox",
+      "sublabel": "React SPA",
+      "sources": [{ "path": "apps/web/src/lib/useLiveRequests.ts", "line": 131, "end_line": 148 }]
+    }
+  ],
+  "segments": [
+    { "from": 160, "to": 410, "label": "Capture (process A)" },
+    { "from": 434, "to": 556, "label": "Cross-process fallback (process B)" }
+  ],
+  "messages": [
+    {
+      "id": "post-webhook",
+      "from": "sender",
+      "to": "apache",
+      "y": 186,
+      "label": "POST /<uuid>/orders?x=1",
+      "variant": "emphasis"
+    },
+    {
+      "id": "route-app",
+      "from": "apache",
+      "to": "capture",
+      "y": 211,
+      "label": "route to a Passenger process"
+    },
+    {
+      "id": "check-endpoint",
+      "from": "capture",
+      "to": "db",
+      "y": 239,
+      "label": "endpoint exists? (UUID regex, 404 before any body byte)",
+      "variant": "security"
+    },
+    {
+      "id": "endpoint-ok",
+      "from": "db",
+      "to": "capture",
+      "y": 269,
+      "label": "yes",
+      "variant": "return"
+    },
+    {
+      "id": "insert-row",
+      "from": "capture",
+      "to": "db",
+      "y": 297,
+      "label": "INSERT request, touch endpoint, cap 500",
+      "variant": "emphasis"
+    },
+    {
+      "id": "emit-local",
+      "from": "capture",
+      "to": "gateway",
+      "y": 325,
+      "label": "request:new (in-process bus)",
+      "variant": "dashed"
+    },
+    {
+      "id": "push-local",
+      "from": "gateway",
+      "to": "inbox",
+      "y": 350,
+      "label": "request:new via long-polling",
+      "variant": "emphasis"
+    },
+    {
+      "id": "reply-ok",
+      "from": "capture",
+      "to": "apache",
+      "y": 375,
+      "label": "200 {ok, id} + CORS * (413 above MAX_BODY_BYTES)",
+      "variant": "return"
+    },
+    {
+      "id": "reply-sender",
+      "from": "apache",
+      "to": "sender",
+      "y": 399,
+      "label": "200",
+      "variant": "return"
+    },
+    {
+      "id": "poll-db",
+      "from": "detector",
+      "to": "db",
+      "y": 452,
+      "label": "rows since last tick (every 2 s, 1 s overlap)",
+      "variant": "dashed"
+    },
+    {
+      "id": "poll-rows",
+      "from": "db",
+      "to": "detector",
+      "y": 482,
+      "label": "new rows",
+      "variant": "return"
+    },
+    {
+      "id": "deliver-unseen",
+      "from": "detector",
+      "to": "gateway",
+      "y": 510,
+      "label": "unseen ids only (remembered 15 s)",
+      "variant": "dashed"
+    },
+    {
+      "id": "push-remote",
+      "from": "gateway",
+      "to": "inbox",
+      "y": 536,
+      "label": "request:new (client dedupes by id)",
+      "variant": "default"
+    }
+  ],
+  "activations": [
+    { "participant": "apache", "from": 206, "to": 405, "type": "cloud" },
+    { "participant": "capture", "from": 211, "to": 381, "type": "backend" },
+    { "participant": "db", "from": 234, "to": 303, "type": "database" },
+    { "participant": "gateway", "from": 320, "to": 357, "type": "messagebus" },
+    { "participant": "detector", "from": 447, "to": 516, "type": "backend" },
+    { "participant": "db", "from": 447, "to": 488, "type": "database" },
+    { "participant": "gateway", "from": 505, "to": 542, "type": "messagebus" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Capture rules",
+      "items": [
+        "Validate the UUID, check the endpoint exists, only then read the body",
+        "413 above MAX_BODY_BYTES and nothing stored; HEAD answers 200 without body",
+        "Oldest rows beyond MAX_REQUESTS_PER_ENDPOINT are dropped on insert"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Two delivery paths",
+      "items": [
+        "Same process: LiveEventsService pushes to the Socket.IO room immediately",
+        "Other processes: ChangeDetector polls the DB for subscribed endpoints",
+        "Both paths may emit the same row; the server remembers ids 15 s, the client dedupes by id"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Degraded modes",
+      "items": [
+        "Socket down: the inbox polls REST every 5 s (badge polling)",
+        "REST failing too: badge offline, full reload on reconnect"
+      ]
+    }
+  ]
+}
