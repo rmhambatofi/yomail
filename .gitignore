@@ -9,3 +9,6 @@ coverage/
 *.tsbuildinfo
 .archify/
 docs/diagrams/out/
+# curl cookie jars from manual tests (hold live session tokens)
+jar
+*.jar

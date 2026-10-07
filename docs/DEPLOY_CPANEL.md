@@ -92,6 +92,20 @@ MAX_BODY_BYTES=524288
 MAX_REQUESTS_PER_ENDPOINT=500
 RETENTION_DAYS_DEFAULT=10
 CORS_ORIGIN=https://yo.manitra.fr
+# accounts (phase 7); the TTL/rate keys are optional, see .env.example for defaults.
+# NODE_ENV=production is what switches emails to SMTP (elsewhere they stay in /devmailcatcher,
+# which remains reachable by admins in production as a mail sink for other applications).
+UNCONFIRMED_USER_TTL_DAYS=7
+SMTP_HOST=mail.manitra.fr
+SMTP_PORT=465
+SMTP_SECURE=1
+SMTP_USER=no-reply@manitra.fr
+SMTP_PASSWORD=...
+MAIL_FROM="yomail <no-reply@manitra.fr>"
+# member features (phase 8); all optional, defaults shown. Keep REPLAY_ALLOW_PRIVATE unset here.
+MAX_REQUESTS_PER_ENDPOINT_MEMBERS=2000
+RETENTION_DAYS_MEMBERS_DEFAULT=30
+REPLAY_TIMEOUT_MS=10000
 ```
 
 The v1 keys `MAIL_DOMAIN`, `INGEST_SECRET`, `MAX_EMAIL_BYTES` are ignored and can be removed.
@@ -161,7 +175,39 @@ tools calling the API from elsewhere).
    `400 Session ID unknown` responses, Passenger is running several processes without session
    affinity: check that the `PassengerStickySessions on` line survived in `.htaccess`. The inbox
    still updates every 5 s in that state (REST polling fallback).
-8. Wait for the next full hour and check `~/logs/yomail-purge.log` has a line.
+8. Wait for the next full hour and check `~/logs/yomail-purge.log` has a line; since phase 7 it also
+   reports expired sessions, stale tokens and unconfirmed accounts.
+9. Accounts: click **Sign in / Sign up** → **Create an account** with a real mailbox (Gmail). The
+   confirmation email must arrive outside spam within a minute; its button opens
+   `https://yo.manitra.fr/confirm/<token>`, which shows "Your account is active" with your username in
+   the header. Open a second tab on `/account`: still signed in (the session lives in the database, so
+   it does not depend on which Passenger process answers). `curl -sI` of a sign-in response must show
+   the cookie with `HttpOnly; Secure; SameSite=Lax`.
+10. Sign in with the admin created in §8; `/account` shows the `ADMIN` badge and an
+    **Administration** section whose **Open the dev mail catcher** button opens
+    `https://yo.manitra.fr/devmailcatcher` (`200`, empty list; `401` in a private window). Push a
+    message with the admin cookie (`POST /devmailcatcher/messages.json`, body
+    `{"to":"x@example.test","subject":"Test","text":"hello"}`) -> `201`, and it shows up in the list
+    whatever Passenger process answers (the table `caught_mails` is shared).
+11. Member features (signed in): **Create endpoint** from the home page, then **Edit** in the inbox →
+    set a name and a custom response (status `201`, body `{"received":true}`), save. The header
+    shows the name and the **Custom response** badge, the home page lists the endpoint under
+    **My endpoints**, and `curl -i https://yo.manitra.fr/<uuid>` returns `201`, the body,
+    `content-security-policy: sandbox`, `x-content-type-options: nosniff` and
+    `access-control-allow-origin: *`. **Reset to default** restores `200 {"ok":true,...}`.
+12. Replay: create a second endpoint, open a request of the first one, **Replay** it to
+    `https://yo.manitra.fr/<second uuid>`: the panel shows the target's `200` and the request
+    appears in the second inbox with its original method, body and headers (no `x-forwarded-*`).
+    `http://127.0.0.1/` or `http://localhost/` as target must be refused with
+    "address not allowed" (the check runs on the server, `REPLAY_ALLOW_PRIVATE` must not be set).
+13. Privacy: open the inbox URL of the endpoint created in point 11 in a private window (no
+    session): the page must say "This endpoint is private" with a **Sign in** button and show no
+    request, no name; `curl -s https://yo.manitra.fr/api/endpoints/<uuid>/requests` returns
+    `401 {"code":"UNAUTHENTICATED"}`. Sending a request to the URL still answers `201` (capture
+    stays open).
+14. Limits: the inbox of an owned endpoint says "kept 30 days, up to 2,000 per endpoint (member
+    limits)"; an endpoint created while signed out says 10 days / 500. `/api/health` returns both
+    `retention_days` and `retention_days_members`.
 
 ## 7. Purge cron and retention
 
@@ -182,17 +228,55 @@ UPDATE settings SET value='30' WHERE `key`='retention_days';
 ```
 
 It applies to every request at once (expiry is computed, never stored). The API caches the value for
-60 s.
+60 s. Endpoints owned by a member use `retention_days_members` (30 by default) instead; their cap is
+`MAX_REQUESTS_PER_ENDPOINT_MEMBERS` in `.env`. The purge applies both retentions on every run.
+
+## 8. Accounts: mailbox and admin user
+
+Account emails (confirmation, password reset) go out through the SMTP server of a cPanel mailbox.
+
+1. cPanel → _Email Accounts_ → _Create_: `no-reply@manitra.fr`, a strong password, minimal quota.
+   _Connect Devices_ on that mailbox shows the outgoing server and port (typically the server
+   hostname or `mail.manitra.fr`, port `465` SSL/TLS, username = the full address). Put them in
+   `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE=1`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM` (§3).
+2. cPanel → _Email Deliverability_ → `manitra.fr`: SPF and DKIM must be valid, or Gmail will file
+   the emails as spam. The hourly sending quota of the shared host is far above what account
+   emails need.
+3. Restart the app (`touch ~/yomail/apps/api/tmp/restart.txt`), then sign up with a real address.
+   The app refuses to start in production without `SMTP_HOST` (the key is named in
+   `stderr.log`). There is no console fallback in production: outside production the messages
+   are caught at `/devmailcatcher` (readable by admins only, from the account page) instead of
+   being sent, which is how the local tests run. In production `/devmailcatcher` still exists
+   (admins only) but holds only what other applications push to it with
+   `POST /devmailcatcher/messages.json`; yomail's own emails never land there.
+4. Create the first admin from the shell (the API has no route for that). The password is read from
+   `YOMAIL_USER_PASSWORD` or prompted (hidden) when running interactively:
+
+   ```sh
+   ssh user@host
+   cd ~/yomail/apps/api && YOMAIL_USER_PASSWORD='...' ~/nodevenv/yomail/apps/api/22/bin/node dist/cli/user.js create-admin --username admin --email you@example.com
+   ```
+
+   The account is created `ENABLED` with the `ADMIN` role; no email is sent. Exit code 1 and a
+   message if the username or email is taken.
+
+The purge cron (§7) also removes expired sessions, used or expired email tokens and accounts never
+confirmed within `UNCONFIRMED_USER_TTL_DAYS` (7 days).
 
 ## Troubleshooting
 
-| Symptom                                           | Where to look                                                                                                                                                                          |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `https://yo.manitra.fr/` shows the old mailbox UI | v1 `index.html` still in the document root (Apache serves existing files first): re-run the deploy or `rm -rf ~/yo.manitra.fr/index.html ~/yo.manitra.fr/assets`                       |
-| `/inbox/<uuid>` gives Apache 404                  | the Passenger block in `.htaccess` is missing or still mounts `/api` (`PassengerBaseURI "/api"`): re-create the app at the root (§2)                                                   |
-| Capture URL answers with the SPA instead of JSON  | the id is not a valid UUID v4 (anything else falls through to the SPA fallback)                                                                                                        |
-| App starts then dies                              | `~/yomail/apps/api/stderr.log`; a missing `.env` key fails validation at boot with the key name; `WEB_DIST_DIR` pointing to a missing folder fails on the first static request         |
-| Badge stuck on **Polling**                        | `curl 'https://yo.manitra.fr/api/socket.io/?EIO=4&transport=polling'`; a 404 means the path is wrong (prefix), an HTML page means Apache intercepted it; see §6 point 7 for stickiness |
-| Client IP always the same wrong value             | `TRUST_PROXY` (§6 point 6)                                                                                                                                                             |
-| 413 on captures smaller than 512 KB               | `MAX_BODY_BYTES` in `.env`; also any Apache `LimitRequestBody` set by the host                                                                                                         |
-| Old front-end after deploy                        | `index.html` is served with `no-cache`; hard-refresh once if a CDN sits in front                                                                                                       |
+| Symptom                                           | Where to look                                                                                                                                                                                                                   |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `https://yo.manitra.fr/` shows the old mailbox UI | v1 `index.html` still in the document root (Apache serves existing files first): re-run the deploy or `rm -rf ~/yo.manitra.fr/index.html ~/yo.manitra.fr/assets`                                                                |
+| `/inbox/<uuid>` gives Apache 404                  | the Passenger block in `.htaccess` is missing or still mounts `/api` (`PassengerBaseURI "/api"`): re-create the app at the root (§2)                                                                                            |
+| Capture URL answers with the SPA instead of JSON  | the id is not a valid UUID v4 (anything else falls through to the SPA fallback)                                                                                                                                                 |
+| App starts then dies                              | `~/yomail/apps/api/stderr.log`; a missing `.env` key fails validation at boot with the key name; `WEB_DIST_DIR` pointing to a missing folder fails on the first static request                                                  |
+| Badge stuck on **Polling**                        | `curl 'https://yo.manitra.fr/api/socket.io/?EIO=4&transport=polling'`; a 404 means the path is wrong (prefix), an HTML page means Apache intercepted it; see §6 point 7 for stickiness                                          |
+| Client IP always the same wrong value             | `TRUST_PROXY` (§6 point 6)                                                                                                                                                                                                      |
+| 413 on captures smaller than 512 KB               | `MAX_BODY_BYTES` in `.env`; also any Apache `LimitRequestBody` set by the host                                                                                                                                                  |
+| Old front-end after deploy                        | `index.html` is served with `no-cache`; hard-refresh once if a CDN sits in front                                                                                                                                                |
+| Confirmation email never arrives                  | `~/yomail/apps/api/stderr.log`: `MailService` logs `sent ...` or the SMTP error; check `SMTP_*` (§8), then the spam folder and _Email Deliverability_ (SPF/DKIM). The user can hit **Resend**                                   |
+| Replay answers `400` "address not allowed"        | The target resolves to a private, loopback or link-local address: expected (SSRF guard). Only public `http(s)` hosts can be replayed; a hostname that resolves to nothing gives `502 REPLAY_FAILED`                             |
+| Inbox says "This endpoint is private"             | Expected: a member owns the endpoint and the browser has no session of that member. Sign in as the owner; an endpoint created while signed out is readable by anyone who knows its id                                           |
+| Custom response not applied                       | Only the owner's configuration counts: `GET /api/endpoints/<uuid>` with the session cookie must show `custom_response: true`; `404` and `413` are never customised; check the `delay_ms` (the sender waits, the inbox does not) |
+| Signed out when switching tabs                    | Should not happen (sessions are in MySQL). If it does, the cookie is missing `Secure`/`HttpOnly` or `NODE_ENV` is not `production`; check `curl -sI` of a sign-in response                                                      |

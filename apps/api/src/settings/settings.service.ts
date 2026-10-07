@@ -5,7 +5,14 @@ import { Repository } from 'typeorm';
 import type { Env } from '../config/env';
 import { Setting } from './setting.entity';
 
+export interface EndpointLimits {
+  retentionDays: number;
+  maxRequests: number;
+}
+
 export const RETENTION_DAYS_KEY = 'retention_days';
+/** Retention of endpoints owned by a member (phase 8). */
+export const RETENTION_DAYS_MEMBERS_KEY = 'retention_days_members';
 const CACHE_TTL_MS = 60_000;
 
 @Injectable()
@@ -29,19 +36,35 @@ export class SettingsService {
   }
 
   /**
-   * Retention in days, read from the settings table, falling back to
-   * RETENTION_DAYS_DEFAULT when the row is missing or not a positive integer.
+   * Retention in days, read from the settings table (`retention_days`, or
+   * `retention_days_members` for endpoints owned by a member), falling back to the
+   * matching env default when the row is missing or not a positive integer.
    */
-  async getRetentionDays(): Promise<number> {
-    const fallback = this.config.get('RETENTION_DAYS_DEFAULT', { infer: true });
-    const raw = await this.get(RETENTION_DAYS_KEY);
+  async getRetentionDays(owned = false): Promise<number> {
+    const key = owned ? RETENTION_DAYS_MEMBERS_KEY : RETENTION_DAYS_KEY;
+    const fallback = this.config.get(
+      owned ? 'RETENTION_DAYS_MEMBERS_DEFAULT' : 'RETENTION_DAYS_DEFAULT',
+      { infer: true },
+    );
+    const raw = await this.get(key);
     if (raw === null) return fallback;
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isInteger(parsed) || parsed <= 0) {
-      this.logger.warn(`settings.${RETENTION_DAYS_KEY}=${raw} is invalid; using ${fallback}`);
+      this.logger.warn(`settings.${key}=${raw} is invalid; using ${fallback}`);
       return fallback;
     }
     return parsed;
+  }
+
+  /** Retention and cap that apply to an endpoint, depending on whether a member owns it (phase 8.4). */
+  async limitsFor(owned: boolean): Promise<EndpointLimits> {
+    return {
+      retentionDays: await this.getRetentionDays(owned),
+      maxRequests: this.config.get(
+        owned ? 'MAX_REQUESTS_PER_ENDPOINT_MEMBERS' : 'MAX_REQUESTS_PER_ENDPOINT',
+        { infer: true },
+      ),
+    };
   }
 
   /** Drops the cache; useful after the purge CLI or tests change a setting. */

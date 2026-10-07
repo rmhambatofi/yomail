@@ -2,7 +2,7 @@ import { All, Controller, Logger, Param, PayloadTooLargeException, Req, Res } fr
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { ENDPOINT_ID_REGEX } from '@yomail/shared';
-import type { CaptureResponse, Pair } from '@yomail/shared';
+import type { CaptureResponse, Pair, ResponseConfig } from '@yomail/shared';
 import type { Env } from '../config/env';
 import { EndpointsService } from '../endpoints/endpoints.service';
 import { CaptureService } from './capture.service';
@@ -49,7 +49,10 @@ export class CaptureController {
     setCorsHeaders(req, res);
 
     const endpointId = rawId.toLowerCase();
-    if (!ENDPOINT_ID_REGEX.test(endpointId) || !(await this.endpoints.exists(endpointId))) {
+    const target = ENDPOINT_ID_REGEX.test(endpointId)
+      ? await this.endpoints.findForCapture(endpointId)
+      : null;
+    if (!target) {
       reply(res, 404, { ok: false, error: 'unknown endpoint' });
       return;
     }
@@ -70,6 +73,7 @@ export class CaptureController {
     try {
       const row = await this.capture.store({
         endpointId,
+        owned: target.ownerId !== null,
         method: req.method.toUpperCase(),
         // req.path has no query string; the endpoint id occupies the first 37 chars ("/" + uuid).
         path: req.path.slice(37) || '/',
@@ -80,7 +84,12 @@ export class CaptureController {
         sizeBytes: raw.length,
         content: await parseContent(contentType, raw),
       });
-      reply(res, 200, { ok: true, id: row.id });
+      if (target.responseConfig) {
+        // The row is stored and announced before the delay: the inbox shows it while the caller waits.
+        await replyConfigured(res, target.responseConfig);
+      } else {
+        reply(res, 200, { ok: true, id: row.id });
+      }
     } catch (err) {
       this.logger.error(`capture failed for ${endpointId}: ${(err as Error).stack ?? err}`);
       reply(res, 500, { ok: false, error: 'internal error' });
@@ -106,6 +115,27 @@ function reply(res: Response, status: number, body: CaptureResponse): void {
   }
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.end(JSON.stringify(body));
+}
+
+/**
+ * Owner-configured response (phase 8). CORS headers are already set. The capture URL
+ * shares the SPA origin, so an HTML body is sandboxed by CSP (opaque origin: no cookies,
+ * no same-origin API access) and never sniffed; the validation already refused the
+ * framing, cookie and CORS/CSP header names (RESPONSE_FORBIDDEN_HEADERS).
+ */
+async function replyConfigured(res: Response, config: ResponseConfig): Promise<void> {
+  if (config.delay_ms > 0) await new Promise((r) => setTimeout(r, config.delay_ms));
+  if (res.req.socket.destroyed) return;
+  res.status(config.status);
+  res.setHeader('Content-Security-Policy', 'sandbox');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  for (const [name, value] of config.headers) res.setHeader(name, value);
+  res.setHeader('Content-Type', config.content_type);
+  if (res.req.method === 'HEAD' || config.body.length === 0) {
+    res.end();
+    return;
+  }
+  res.end(config.body);
 }
 
 /** [name, value] pairs in the order sent; nothing is lowercased or merged. */

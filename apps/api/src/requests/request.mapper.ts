@@ -24,6 +24,7 @@ export const DETAIL_COLUMNS = [
   'body',
   'formFields',
   'droppedFiles',
+  'note',
 ] as const satisfies readonly (keyof CapturedRequest)[];
 
 export type SummaryRow = Pick<CapturedRequest, (typeof SUMMARY_COLUMNS)[number]>;
@@ -59,5 +60,6 @@ export function toDetail(row: DetailRow, retentionDays: number): RequestDetail {
     dropped_files: row.droppedFiles,
     // Sanitized on every read, never stored: the whitelist can evolve without a migration.
     html_sanitized: row.contentKind === 'html' && row.body ? sanitizeHtmlBody(row.body) : null,
+    note: row.note,
   };
 }

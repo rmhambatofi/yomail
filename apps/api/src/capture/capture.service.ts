@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { Pair } from '@yomail/shared';
-import type { Env } from '../config/env';
 import { EndpointsService } from '../endpoints/endpoints.service';
 import { LiveEventsService } from '../live/live-events.service';
 import { CapturedRequest } from '../requests/request.entity';
@@ -14,6 +12,8 @@ import type { ParsedContent } from './content';
 
 export interface CaptureInput {
   endpointId: string;
+  /** A member owns the endpoint: members' cap and retention apply. */
+  owned: boolean;
   method: string;
   path: string;
   queryParams: Pair[] | null;
@@ -27,17 +27,13 @@ export interface CaptureInput {
 @Injectable()
 export class CaptureService {
   private readonly logger = new Logger(CaptureService.name);
-  private readonly maxPerEndpoint: number;
 
   constructor(
     @InjectRepository(CapturedRequest) private readonly requests: Repository<CapturedRequest>,
     private readonly endpoints: EndpointsService,
     private readonly settings: SettingsService,
     private readonly live: LiveEventsService,
-    config: ConfigService<Env, true>,
-  ) {
-    this.maxPerEndpoint = config.get('MAX_REQUESTS_PER_ENDPOINT', { infer: true });
-  }
+  ) {}
 
   /** Persists one captured request, marks the endpoint active and enforces the per-endpoint cap. */
   async store(input: CaptureInput): Promise<CapturedRequest> {
@@ -59,26 +55,27 @@ export class CaptureService {
     });
     await this.requests.insert(row);
     await this.endpoints.touch(input.endpointId, row.receivedAt);
-    await this.enforceCap(input.endpointId);
+    const limits = await this.settings.limitsFor(input.owned);
+    await this.enforceCap(input.endpointId, limits.maxRequests);
     // Fast path for subscribers on this process; other processes rely on the DB ChangeDetector.
-    this.live.requestNew(toSummary(row, await this.settings.getRetentionDays()));
+    this.live.requestNew(toSummary(row, limits.retentionDays));
     return row;
   }
 
-  /** Keeps only the newest MAX_REQUESTS_PER_ENDPOINT rows of an endpoint. */
-  private async enforceCap(endpointId: string): Promise<void> {
+  /** Keeps only the newest `max` rows of an endpoint (members' or anonymous cap). */
+  private async enforceCap(endpointId: string, max: number): Promise<void> {
     const count = await this.requests.count({ where: { endpointId } });
-    if (count <= this.maxPerEndpoint) return;
+    if (count <= max) return;
     // MySQL forbids selecting from the target table in a DELETE subquery unless it is
     // wrapped in a derived table, hence the inner SELECT ... FROM (...) t.
     const result = (await this.requests.query(
       'DELETE FROM `requests` WHERE `endpoint_id` = ? AND `id` NOT IN (' +
         'SELECT `id` FROM (SELECT `id` FROM `requests` WHERE `endpoint_id` = ? ORDER BY `received_at` DESC LIMIT ?) t)',
-      [endpointId, endpointId, this.maxPerEndpoint],
+      [endpointId, endpointId, max],
     )) as { affectedRows?: number };
     if (result.affectedRows) {
       this.logger.log(
-        `endpoint ${endpointId}: dropped ${result.affectedRows} oldest request(s) (cap ${this.maxPerEndpoint})`,
+        `endpoint ${endpointId}: dropped ${result.affectedRows} oldest request(s) (cap ${max})`,
       );
     }
   }

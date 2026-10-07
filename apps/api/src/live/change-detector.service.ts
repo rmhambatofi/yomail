@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, MoreThan, Repository } from 'typeorm';
 import type { RequestSummary } from '@yomail/shared';
+import { EndpointsService } from '../endpoints/endpoints.service';
 import { CapturedRequest } from '../requests/request.entity';
 import { SUMMARY_COLUMNS, toSummary } from '../requests/request.mapper';
 import type { SummaryRow } from '../requests/request.mapper';
@@ -35,6 +36,7 @@ export class ChangeDetector {
   constructor(
     @InjectRepository(CapturedRequest) private readonly requests: Repository<CapturedRequest>,
     private readonly settings: SettingsService,
+    private readonly endpoints: EndpointsService,
   ) {}
 
   /** Wires the gateway in and starts polling. */
@@ -81,14 +83,19 @@ export class ChangeDetector {
       })) as SummaryRow[];
       if (rows.length === 0) return;
 
-      const retentionDays = await this.settings.getRetentionDays();
+      // expires_at depends on whether a member owns the endpoint (phase 8.4).
+      const [retention, retentionMembers, owned] = await Promise.all([
+        this.settings.getRetentionDays(false),
+        this.settings.getRetentionDays(true),
+        this.endpoints.ownedMap([...new Set(rows.map((r) => r.endpointId))]),
+      ]);
       for (const row of rows) {
         const seen = this.since.get(row.endpointId);
         if (seen && row.receivedAt.getTime() > seen.getTime())
           this.since.set(row.endpointId, row.receivedAt);
         if (this.emitted.has(row.id)) continue;
         this.emitted.set(row.id, Date.now());
-        this.deliver(toSummary(row, retentionDays));
+        this.deliver(toSummary(row, owned.get(row.endpointId) ? retentionMembers : retention));
       }
     } catch (err) {
       this.logger.error(`change detection failed: ${(err as Error).message}`);

@@ -31,6 +31,10 @@ export class LiveEventsService {
     this.emit('endpoint:deleted', { endpointId });
   }
 
+  endpointClaimed(endpointId: string): void {
+    this.emit('endpoint:claimed', { endpointId });
+  }
+
   on<E extends EventName>(event: E, listener: (payload: Payload<E>) => void): () => void {
     this.emitter.on(event, listener);
     return () => this.emitter.off(event, listener);

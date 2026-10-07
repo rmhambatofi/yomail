@@ -1,19 +1,32 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { extractEndpointId, shortEndpointId } from '@yomail/shared';
+import { api } from '../api/client';
+import { useAuth } from '../lib/auth';
 import { listRecentEndpoints } from '../lib/recentEndpoints';
+import { useAsync } from '../lib/useAsync';
 import { btnSecondary } from './Feedback';
 
 /**
  * Switch to another endpoint from the inbox: paste an id or a full endpoint URL, or pick
- * one of the recently opened endpoints (native datalist, no custom dropdown).
+ * one of the recently opened endpoints (native datalist, no custom dropdown). Signed-in
+ * users also get their own endpoints (phase 8), by name when they have one.
  */
 export function EndpointPicker({ currentId }: { currentId: string | null }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const recents = listRecentEndpoints().filter((e) => e.id !== currentId);
+  const mineLoader = useCallback(
+    (signal: AbortSignal) =>
+      user ? api.myEndpoints(signal) : Promise.resolve({ endpoints: [] }),
+    [user],
+  );
+  const mine = useAsync(mineLoader);
+  const owned = (mine.data?.endpoints ?? []).filter((e) => e.id !== currentId);
+  const ownedIds = new Set(owned.map((e) => e.id));
+  const recents = listRecentEndpoints().filter((e) => e.id !== currentId && !ownedIds.has(e.id));
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -44,6 +57,11 @@ export function EndpointPicker({ currentId }: { currentId: string | null }) {
           spellCheck={false}
         />
         <datalist id="recent-endpoints">
+          {owned.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.name ?? shortEndpointId(e.id)} · yours
+            </option>
+          ))}
           {recents.map((r) => (
             <option key={r.id} value={r.id}>
               {shortEndpointId(r.id)} · opened {new Date(r.openedAt).toLocaleDateString()}

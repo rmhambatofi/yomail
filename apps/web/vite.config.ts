@@ -17,6 +17,8 @@ export default defineConfig({
       // ws: true also carries the Socket.IO upgrade (Phase 4) on /api/socket.io.
       '/api': { target: proxyTarget, changeOrigin: true, ws: true },
       [uuidPath]: { target: proxyTarget, changeOrigin: true },
+      // Dev mail catcher (admin-only): emails the API "sends" in dev are readable here.
+      '/devmailcatcher': { target: proxyTarget, changeOrigin: true },
     },
   },
   build: { outDir: 'dist', sourcemap: false },

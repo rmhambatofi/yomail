@@ -10,6 +10,11 @@ import {
 import type { Server, Socket } from 'socket.io';
 import { ENDPOINT_ID_REGEX } from '@yomail/shared';
 import type { ClientToServerEvents, ServerToClientEvents } from '@yomail/shared';
+import { AuthHttpException } from '../auth/auth-error';
+import { sessionTokenFromCookieHeader } from '../auth/session-cookie';
+import { EndpointsService } from '../endpoints/endpoints.service';
+import { SessionsService } from '../users/sessions.service';
+import type { User } from '../users/user.entity';
 import { ChangeDetector } from './change-detector.service';
 import { LiveEventsService } from './live-events.service';
 
@@ -36,6 +41,8 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly events: LiveEventsService,
     private readonly detector: ChangeDetector,
+    private readonly endpoints: EndpointsService,
+    private readonly sessions: SessionsService,
   ) {}
 
   onModuleInit(): void {
@@ -53,6 +60,13 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy {
       this.events.on('endpoint:deleted', (p) =>
         this.server.to(room(p.endpointId)).emit('endpoint:deleted', p),
       ),
+      // Private from now on: tell the subscribers of this process and drop them from the
+      // room (sockets on other Passenger processes stay until they reconnect, when
+      // `subscribe` checks again).
+      this.events.on('endpoint:claimed', (p) => {
+        this.server.to(room(p.endpointId)).emit('endpoint:claimed', p);
+        this.server.in(room(p.endpointId)).socketsLeave(room(p.endpointId));
+      }),
     );
     this.detector.start(
       () => this.activeEndpoints(),
@@ -65,14 +79,24 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy {
     for (const off of this.unsubscribe) off();
   }
 
+  /**
+   * Joins the endpoint's room. Same read rule as the REST inbox (phase 8): an owned
+   * endpoint only for its owner, identified by the session cookie of the handshake.
+   */
   @SubscribeMessage('subscribe')
-  subscribe(
+  async subscribe(
     @ConnectedSocket() client: LiveSocket,
     @MessageBody() payload: { endpointId?: string } | undefined,
-  ): { ok: boolean; error?: string } {
+  ): Promise<{ ok: boolean; error?: string }> {
     const endpointId = payload?.endpointId?.toLowerCase();
     if (!endpointId || !ENDPOINT_ID_REGEX.test(endpointId)) {
       return { ok: false, error: 'invalid endpoint id' };
+    }
+    try {
+      await this.endpoints.assertReadable(endpointId, await this.userOf(client));
+    } catch (err) {
+      if (err instanceof AuthHttpException) return { ok: false, error: err.code };
+      return { ok: false, error: 'unknown endpoint' };
     }
     const joined = [...client.rooms].filter((r) => r.startsWith(ROOM_PREFIX));
     if (!joined.includes(room(endpointId)) && joined.length >= MAX_SUBSCRIPTIONS_PER_SOCKET) {
@@ -94,6 +118,14 @@ export class LiveGateway implements OnModuleInit, OnModuleDestroy {
     const endpointId = payload?.endpointId?.toLowerCase();
     if (endpointId) void client.leave(room(endpointId));
     return { ok: true };
+  }
+
+  /** The signed-in user of the socket, from the handshake's session cookie (resolved per call). */
+  private async userOf(client: LiveSocket): Promise<User | null> {
+    const token = sessionTokenFromCookieHeader(client.handshake.headers.cookie);
+    if (!token) return null;
+    const auth = await this.sessions.resolve(token);
+    return auth?.user ?? null;
   }
 
   /** Endpoint ids that currently have at least one subscriber on this process. */

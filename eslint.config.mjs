@@ -30,7 +30,7 @@ export default tseslint.config(
   },
   {
     // Manual test helpers are plain CommonJS Node scripts
-    files: ['apps/api/test/**/*.cjs'],
+    files: ['apps/api/test/**/*.cjs', 'apps/web/test/**/*.cjs'],
     languageOptions: { sourceType: 'commonjs', globals: globals.node },
     rules: { '@typescript-eslint/no-require-imports': 'off' },
   },

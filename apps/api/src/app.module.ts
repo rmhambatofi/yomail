@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { AuthModule } from './auth/auth.module';
 import { CaptureModule } from './capture/capture.module';
+import { ThrottlingModule } from './common/throttling.module';
 import { validateEnv } from './config/env';
 import { DatabaseModule } from './database/database.module';
 import { EndpointsModule } from './endpoints/endpoints.module';
@@ -21,11 +23,13 @@ import { StaticModule } from './static/static.module';
       validate: validateEnv,
     }),
     DatabaseModule,
+    ThrottlingModule,
     SettingsModule,
     LiveEventsModule,
     HealthModule,
     EndpointsModule,
     RequestsModule,
+    AuthModule,
     CaptureModule,
     LiveModule,
     PurgeScheduleModule,

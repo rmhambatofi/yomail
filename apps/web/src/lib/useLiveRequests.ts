@@ -11,10 +11,17 @@ const HIGHLIGHT_MS = 2_500;
 
 /** live: socket connected · polling: socket down, REST every 5 s · offline: REST failing too */
 export type LiveStatus = 'live' | 'polling' | 'offline';
-export type LoadStatus = 'loading' | 'ready' | 'not-found' | 'error';
+/** forbidden: the endpoint belongs to a member and the caller is not its owner (phase 8). */
+export type LoadStatus = 'loading' | 'ready' | 'not-found' | 'forbidden' | 'error';
+/** Why the inbox is forbidden: no session, or a session of another member. */
+export type AccessDenied = 'unauthenticated' | 'not-owner';
 
 export interface LiveRequestsState {
   status: LoadStatus;
+  /** Set with status 'forbidden'. */
+  denied: AccessDenied | null;
+  /** Incremented on every full reload (explicit, or after the endpoint was claimed). */
+  generation: number;
   error: Error | null;
   live: LiveStatus;
   requests: RequestSummary[];
@@ -55,6 +62,7 @@ function merge(current: RequestSummary[], incoming: RequestSummary[]): RequestSu
  */
 export function useLiveRequests(endpointId: string | null): LiveRequestsState {
   const [status, setStatus] = useState<LoadStatus>('loading');
+  const [denied, setDenied] = useState<AccessDenied | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [live, setLive] = useState<LiveStatus>('polling');
   const [requests, setRequests] = useState<RequestSummary[]>([]);
@@ -94,12 +102,17 @@ export function useLiveRequests(endpointId: string | null): LiveRequestsState {
         });
         setHasMore((prev) => prev || page.has_more);
         setStatus('ready');
+        setDenied(null);
         setError(null);
         return true;
       } catch (err) {
         if (signal?.aborted) return false;
         if (err instanceof ApiError && err.status === 404) {
           setStatus('not-found');
+        } else if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+          // Owned endpoint, caller is not the owner: the inbox is private (phase 8).
+          setDenied(err.status === 401 ? 'unauthenticated' : 'not-owner');
+          setStatus('forbidden');
         } else {
           setError(err instanceof Error ? err : new Error(String(err)));
           setStatus((s) => (s === 'loading' ? 'error' : s));
@@ -113,6 +126,7 @@ export function useLiveRequests(endpointId: string | null): LiveRequestsState {
   // Initial load (and explicit reloads).
   useEffect(() => {
     setStatus('loading');
+    setDenied(null);
     setRequests([]);
     setHasMore(false);
     if (!endpointId) {
@@ -125,7 +139,8 @@ export function useLiveRequests(endpointId: string | null): LiveRequestsState {
   }, [endpointId, fetchNewest, tick]);
 
   // Socket.IO subscription (kept across request selection; re-created only per endpoint).
-  const notFound = status === 'not-found';
+  // Not opened for an inbox the caller cannot read: the server would refuse the room anyway.
+  const notFound = status === 'not-found' || status === 'forbidden';
   useEffect(() => {
     if (!endpointId || notFound) return;
     const socket: LiveSocket = io({ path: `${API_URL}/socket.io`, reconnectionDelayMax: 5_000 });
@@ -158,6 +173,10 @@ export function useLiveRequests(endpointId: string | null): LiveRequestsState {
     socket.on('endpoint:deleted', (p) => {
       if (p.endpointId === endpointId) setStatus('not-found');
     });
+    // A member took the endpoint: reload so the server decides again whether we may read it.
+    socket.on('endpoint:claimed', (p) => {
+      if (p.endpointId === endpointId) setTick((t) => t + 1);
+    });
 
     return () => {
       socket.emit('unsubscribe', { endpointId });
@@ -168,7 +187,9 @@ export function useLiveRequests(endpointId: string | null): LiveRequestsState {
 
   // REST polling whenever the socket is not live.
   useEffect(() => {
-    if (!endpointId || live === 'live' || status === 'not-found' || status === 'loading') return;
+    if (!endpointId || live === 'live' || status === 'not-found' || status === 'forbidden')
+      return;
+    if (status === 'loading') return;
     const timer = setInterval(() => {
       void fetchNewest().then((ok) => {
         setLive((l) => (l === 'live' ? l : ok ? 'polling' : 'offline'));
@@ -203,6 +224,8 @@ export function useLiveRequests(endpointId: string | null): LiveRequestsState {
 
   return {
     status,
+    denied,
+    generation: tick,
     error,
     live,
     requests,

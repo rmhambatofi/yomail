@@ -15,14 +15,22 @@ export const CAPTURE_ROUTE_SUBPATH = `:${CAPTURE_PARAM}(${UUID_SHAPE})/*`;
 
 /**
  * Patterns for `setGlobalPrefix(prefix, { exclude })`. Nest compiles each one with
- * path-to-regexp 3 and tests it against the *literal* route strings above (not against
+ * path-to-regexp 3 and tests it against the *literal* route strings (not against
  * incoming URLs). A loose pattern such as `:param` would also match `/health` and strip
  * the prefix from every single-segment API route, so the route strings are escaped
  * (`\:`, `\(`, `\)`, `\*`) to produce exact literal matches only.
  */
-export const CAPTURE_PREFIX_EXCLUDES: RouteInfo[] = [CAPTURE_ROUTE_ROOT, CAPTURE_ROUTE_SUBPATH].map(
-  (route) => ({ path: route.replace(/[:()*]/g, '\\$&'), method: RequestMethod.ALL }),
-);
+export function excludeLiteralRoutes(routes: string[]): RouteInfo[] {
+  return routes.map((route) => ({
+    path: route.replace(/[:()*]/g, (char) => `\\${char}`),
+    method: RequestMethod.ALL,
+  }));
+}
+
+export const CAPTURE_PREFIX_EXCLUDES: RouteInfo[] = excludeLiteralRoutes([
+  CAPTURE_ROUTE_ROOT,
+  CAPTURE_ROUTE_SUBPATH,
+]);
 
 const CAPTURE_PATH = new RegExp(`^/${UUID_SHAPE}(/|$)`);
 

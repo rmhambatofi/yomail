@@ -66,4 +66,8 @@ export class CapturedRequest {
 
   @Column({ name: 'received_at', type: 'datetime', precision: 3 })
   receivedAt: Date;
+
+  /** Free text set by the endpoint owner (phase 8); never loaded in listings. */
+  @Column({ name: 'note', type: 'text', nullable: true })
+  note: string | null;
 }

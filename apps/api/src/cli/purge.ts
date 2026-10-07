@@ -38,7 +38,9 @@ async function main(): Promise<number> {
     const report = await app.get(PurgeService).run({ dryRun });
     const line =
       `${new Date().toISOString()} ${dryRun ? 'would delete' : 'deleted'} ${report.deleted} request(s), ` +
-      `${report.endpointsDeleted} idle endpoint(s) (retention ${report.retentionDays} d, cutoff ${report.cutoff.toISOString()}, ${report.batches} batch(es))`;
+      `${report.endpointsDeleted} idle endpoint(s) (retention ${report.retentionDays} d, members ${report.retentionDaysMembers} d, cutoff ${report.cutoff.toISOString()}, ${report.batches} batch(es)), ` +
+      `${report.sessionsDeleted} expired session(s), ${report.tokensDeleted} stale token(s), ` +
+      `${report.usersDeleted} unconfirmed account(s) (ttl ${report.unconfirmedUserTtlDays} d)`;
     if (!quiet) Logger.log(line, 'purge-cli');
     return 0;
   } catch (err) {

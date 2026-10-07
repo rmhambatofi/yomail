@@ -4,13 +4,17 @@ import { resolve } from 'node:path';
 import { DataSource } from 'typeorm';
 import type { DataSourceOptions } from 'typeorm';
 import { Endpoint } from '../endpoints/endpoint.entity';
+import { CaughtMail } from '../mail/caught-mail.entity';
 import { CapturedRequest } from '../requests/request.entity';
 import { Setting } from '../settings/setting.entity';
+import { Session } from '../users/session.entity';
+import { UserToken } from '../users/user-token.entity';
+import { User } from '../users/user.entity';
 import { migrations } from './migrations';
 import { validateEnv } from '../config/env';
 import type { Env } from '../config/env';
 
-export const entities = [Endpoint, CapturedRequest, Setting];
+export const entities = [Endpoint, CapturedRequest, Setting, User, Session, UserToken, CaughtMail];
 
 /** Shared by the Nest TypeOrmModule and the TypeORM CLI so both see one config. */
 export function buildDataSourceOptions(env: Env): DataSourceOptions {

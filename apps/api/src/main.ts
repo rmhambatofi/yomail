@@ -3,12 +3,14 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import type { NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
-import { CAPTURE_PREFIX_EXCLUDES, isCapturePath } from './capture/routes';
+import { CAPTURE_PREFIX_EXCLUDES, excludeLiteralRoutes, isCapturePath } from './capture/routes';
 import type { Env } from './config/env';
 import { ConfiguredIoAdapter, socketIoPath } from './live/socket-io.adapter';
+import { DEV_MAIL_CATCHER_ROUTES } from './mail/dev-mail-catcher.controller';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -20,9 +22,14 @@ async function bootstrap(): Promise<void> {
   const config = app.get(ConfigService<Env, true>);
   const logger = new Logger('bootstrap');
 
-  // Capture routes (/<uuid>, /<uuid>/sub/path) stay at the site root, outside the prefix.
+  // Capture routes (/<uuid>, /<uuid>/sub/path) and the dev mail catcher (/devmailcatcher,
+  // admin-only) stay at the site root, outside the prefix.
   const prefix = config.get('API_PREFIX', { infer: true });
-  if (prefix) app.setGlobalPrefix(prefix, { exclude: CAPTURE_PREFIX_EXCLUDES });
+  if (prefix) {
+    app.setGlobalPrefix(prefix, {
+      exclude: [...CAPTURE_PREFIX_EXCLUDES, ...excludeLiteralRoutes(DEV_MAIL_CATCHER_ROUTES)],
+    });
+  }
 
   // CORS for the API only. The capture controller sets its own open CORS headers and must
   // see OPTIONS requests itself: the cors middleware would otherwise end preflights with 204.
@@ -34,6 +41,12 @@ async function bootstrap(): Promise<void> {
       isCapturePath(req.path) ? next() : apiCors(req, res, next),
     );
   }
+
+  // Session cookie for the auth guards. Capture paths never need it.
+  const cookies = cookieParser();
+  app.use((req: Request, res: Response, next: NextFunction) =>
+    isCapturePath(req.path) ? next() : cookies(req, res, next),
+  );
 
   // Socket.IO shares the HTTP server (Passenger forwards a single port) under /<prefix>/socket.io.
   app.useWebSocketAdapter(

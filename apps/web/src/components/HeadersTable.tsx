@@ -1,8 +1,6 @@
 import type { Pair } from '@yomail/shared';
+import { isProxyHeader } from '../lib/headers';
 import { CopyButton } from './CopyButton';
-
-/** Headers added by Apache/Passenger in production, shown dimmed so the caller's own stand out. */
-const PROXY_HEADER = /^(x-forwarded-|x-real-ip$|x-sendfile|passenger-|via$)/i;
 
 export function HeadersTable({ headers }: { headers: Pair[] }) {
   if (headers.length === 0) return <p className="text-sm text-slate-500">No headers.</p>;
@@ -15,7 +13,8 @@ export function HeadersTable({ headers }: { headers: Pair[] }) {
       <table className="w-full table-fixed text-xs">
         <tbody>
           {headers.map(([name, value], i) => {
-            const proxy = PROXY_HEADER.test(name);
+            // Proxy headers are dimmed so the caller's own stand out.
+            const proxy = isProxyHeader(name);
             return (
               <tr key={i} className={`border-t border-slate-100 ${proxy ? 'text-slate-400' : ''}`}>
                 <th
